@@ -22,13 +22,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import de.cubeisland.engine.reflect.ReflectedYaml;
+import de.cubeisland.engine.reflect.codec.yaml.ReflectedYaml;
 import de.cubeisland.engine.reflect.Section;
+import de.cubeisland.engine.reflect.annotations.Comment;
 
 @SuppressWarnings("all")
 public class DonationsConfig extends ReflectedYaml
 {
+    @Comment({"Example:", "10.0:", "  name: 10 ", "  reached:", "   - say reached {TOTAL} thanks to {NAME}", "lost:", "   - say lost {TOTAL}"})
     public Map<Double, DonationGoal> goals = new HashMap<>();
+    public double lastTotal = 0;
+
+    public List<String> forUser = new ArrayList<>();
 
     public static class DonationGoal implements Section
     {
@@ -36,6 +41,4 @@ public class DonationsConfig extends ReflectedYaml
         public List<String> reached = new ArrayList<>();
         public List<String> lost = new ArrayList<>();
     }
-
-    public double lastTotal = 0;
 }

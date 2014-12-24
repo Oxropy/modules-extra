@@ -48,15 +48,40 @@ public class DonationController
     public ApiResponse update(ApiRequest request)
     {
         JsonNode data = request.getData();
-        double newTotal = data.get("total").asDouble();
-        this.updateDonation(newTotal);
-        this.config.lastTotal = newTotal;
-        this.config.save();
         JsonNode user = data.get("name");
+        final double newTotal = data.get("total").asDouble();
         if (user != null)
         {
-            this.broadcastDonation(user.asText()); // Automatic updated do not include a user
+            final String userName = user.asText();
+            this.broadcastDonation(userName);
+
+            module.getCore().getTaskManager().runTask(module, new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    CommandManager cmdMan = module.getCore().getCommandManager();
+                    for (String cmd : config.forUser)
+                    {
+                        if (cmd.contains("{NAME}"))
+                        {
+                            if (userName == null)
+                            {
+                                continue;
+                            }
+                            cmd = cmd.replace("{NAME}", userName);
+                        }
+                        cmd = cmd.replace("{TOTAL}", String.format("%.2f", newTotal));
+                        cmdMan.runCommand(cmdMan.getConsoleSender(), cmd);
+                    }
+                }
+            });
         }
+
+        this.updateDonation(newTotal, user == null ? null : user.asText());
+        this.config.lastTotal = newTotal;
+        this.config.save();
+
         ApiResponse response = new ApiResponse();
         response.setContent(mapper.createObjectNode().put("response", "ok")); // TODO
         return response;
@@ -64,11 +89,10 @@ public class DonationController
 
     private void broadcastDonation(String user)
     {
-        module.getCore().getUserManager().broadcastMessage(MessageType.POSITIVE, "New Donation! Thank you {user}!",
-                                                           user);
+        module.getCore().getUserManager().broadcastTranslated(MessageType.POSITIVE, "New Donation! Thank you {user}!", user);
     }
 
-    private void updateDonation(double newTotal)
+    private void updateDonation(final double newTotal, final String user)
     {
         final List<String> cmds = new ArrayList<>();
         if (newTotal < this.config.lastTotal)
@@ -78,10 +102,7 @@ public class DonationController
                 if (val > newTotal && val <= config.lastTotal)
                 {
                     DonationGoal goal = this.config.goals.get(val);
-                    for (String cmd : goal.lost)
-                    {
-                        cmds.add(cmd);
-                    }
+                    cmds.addAll(goal.lost);
                 }
             }
         }
@@ -92,10 +113,7 @@ public class DonationController
                 if (val >= config.lastTotal && val < newTotal)
                 {
                     DonationGoal goal = this.config.goals.get(val);
-                    for (String cmd : goal.reached)
-                    {
-                        cmds.add(cmd);
-                    }
+                    cmds.addAll(goal.reached);
                 }
             }
         }
@@ -107,6 +125,15 @@ public class DonationController
                 CommandManager cmdMan = module.getCore().getCommandManager();
                 for (String cmd : cmds)
                 {
+                    if (cmd.contains("{NAME}"))
+                    {
+                        if (user == null)
+                        {
+                            continue;
+                        }
+                        cmd = cmd.replace("{NAME}", user);
+                    }
+                    cmd = cmd.replace("{TOTAL}", String.format("%.2f", newTotal));
                     cmdMan.runCommand(cmdMan.getConsoleSender(), cmd);
                 }
             }

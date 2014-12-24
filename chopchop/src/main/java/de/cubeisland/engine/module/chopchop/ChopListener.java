@@ -108,11 +108,15 @@ public class ChopListener implements Listener
     }
 
     @EventHandler
-    public void onChop(BlockBreakEvent event)
+    public void onChop(final BlockBreakEvent event)
     {
         final ItemStack axe = event.getPlayer().getItemInHand();
         if (isChopChop(event.getBlock(), axe))
         {
+            if (axe.getDurability() >= 1561)
+            {
+                return;
+            }
             TreeSpecies species = getSpecies(event.getBlock());
             Set<Block> treeBlocks = findTreeBlocks(event, species);
             if (!treeBlocks.isEmpty())
@@ -202,13 +206,26 @@ public class ChopListener implements Listener
                     }
                 }
 
-                final int uses = logs;
+                final int uses = axe.getDurability() + logs;
                 module.getCore().getTaskManager().runTaskDelayed(module, new Runnable()
                 {
                     @Override
                     public void run()
                     {
-                        axe.setDurability((short)(axe.getDurability() + uses));
+                        axe.setDurability((short)(uses));
+                        if (uses >= 1561)
+                        {
+                            if (axe.getAmount() == 1)
+                            {
+                                axe.setAmount(0);
+                                axe.setDurability((short)1561);
+                                event.getPlayer().updateInventory();
+                            }
+                            else
+                            {
+                                axe.setAmount(axe.getAmount() - 1);
+                            }
+                        }
                     }
                 }, 1);
 

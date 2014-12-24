@@ -50,6 +50,8 @@
     <module>bigdata</module>
     <module>donations</module>
     <module>chopchop</module>
+    <module>holiday</module>
+    <module>unbreakableboat</module>
     <module>YouGottaCatchEmAll</module>
   </modules>
 

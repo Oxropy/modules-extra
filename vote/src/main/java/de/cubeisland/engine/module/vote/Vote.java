@@ -23,7 +23,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 
 import com.vexsoftware.votifier.model.VotifierEvent;
-import de.cubeisland.engine.core.command.reflected.ReflectedCommand;
 import de.cubeisland.engine.core.module.Module;
 import de.cubeisland.engine.core.module.service.Economy;
 import de.cubeisland.engine.core.user.User;
@@ -47,7 +46,7 @@ public class Vote extends Module implements Listener
         this.getCore().getDB().registerTable(TableVote.class);
         this.config = this.loadConfig(VoteConfiguration.class);
         this.getCore().getEventManager().registerListener(this, this);
-        this.getCore().getCommandManager().registerCommands(this, new VoteCommands(this), ReflectedCommand.class);
+        this.getCore().getCommandManager().addCommands(this.getCore().getCommandManager(), this, new VoteCommands(this));
         this.dsl = this.getCore().getDB().getDSL();
     }
 
@@ -63,7 +62,7 @@ public class Vote extends Module implements Listener
             if (voteModel == null)
             {
                 voteModel = this.dsl.newRecord(TABLE_VOTE).newVote(user);
-                voteModel.insert();
+                voteModel.asyncInsert();
             }
             else
             {
@@ -76,18 +75,18 @@ public class Vote extends Module implements Listener
                     voteModel.setValue(TABLE_VOTE.VOTEAMOUNT, UShort.valueOf(voteModel.getValue(TABLE_VOTE.VOTEAMOUNT).intValue() + 1));
                 }
                 voteModel.setValue(TABLE_VOTE.LASTVOTE, new Timestamp(System.currentTimeMillis()));
-                voteModel.update();
+                voteModel.asyncUpdate();
             }
             economy.createAccount(user.getUniqueId());
             int voteamount = voteModel.getValue(TABLE_VOTE.VOTEAMOUNT).intValue();
             double money = this.config.voteReward * (Math.pow(1+1.5/voteamount, voteamount-1));
             economy.deposit(user.getUniqueId(), money);
             String moneyFormat = economy.format(money);
-            this.getCore().getUserManager().broadcastMessage(NONE, this.config.voteBroadcast.
-                replace("{PLAYER}", vote.getUsername()).
-                replace("{MONEY}", moneyFormat).
-                replace("{AMOUNT}", String.valueOf(voteamount)).
-                replace("{VOTEURL}", this.config.voteUrl));
+            this.getCore().getUserManager().broadcastMessage(NONE, this.config.voteBroadcast.replace("{PLAYER}",
+                vote.getUsername()).replace("{MONEY}",
+                moneyFormat).replace("{AMOUNT}",
+                String.valueOf(voteamount)).replace("{VOTEURL}",
+                this.config.voteUrl));
             user.sendMessage(ChatFormat.parseFormats(this.config.voteMessage.
                 replace("{PLAYER}", vote.getUsername()).
                 replace("{MONEY}", moneyFormat).
