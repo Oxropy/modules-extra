@@ -17,20 +17,22 @@
  */
 package de.cubeisland.engine.module.signmarket.storage;
 
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map.Entry;
+import java.util.Set;
+
 import de.cubeisland.engine.module.signmarket.Signmarket;
-import gnu.trove.map.hash.TLongObjectHashMap;
-import gnu.trove.set.hash.TLongHashSet;
 import org.jooq.DSLContext;
+import org.jooq.types.UInteger;
 
 import static de.cubeisland.engine.module.signmarket.storage.TableSignItem.TABLE_SIGN_ITEM;
 
 public class SignMarketItemManager
 {
-    private TLongObjectHashMap<SignMarketItemModel> itemInfoModels;
-
     private final Signmarket module;
-
     private final DSLContext dsl;
+    private HashMap<UInteger, ItemModel> itemInfoModels;
 
     public SignMarketItemManager(Signmarket module)
     {
@@ -40,45 +42,52 @@ public class SignMarketItemManager
 
     public void load()
     {
-        this.itemInfoModels = new TLongObjectHashMap<>();
-        for (SignMarketItemModel model : this.dsl.selectFrom(TABLE_SIGN_ITEM).fetch())
+        this.itemInfoModels = new HashMap<>();
+        for (ItemModel model : this.dsl.selectFrom(TABLE_SIGN_ITEM).fetch())
         {
-            this.itemInfoModels.put(model.getKey().longValue(), model);
+            this.itemInfoModels.put(model.getValue(TABLE_SIGN_ITEM.KEY), model);
         }
         this.module.getLog().debug("{} item models loaded", this.itemInfoModels.size());
     }
 
-    public SignMarketItemModel getInfoModel(long key)
+    public ItemModel getInfoModel(UInteger key)
     {
         return this.itemInfoModels.get(key);
     }
 
-    public void store(SignMarketItemModel itemInfo)
+    public void store(ItemModel itemInfo)
     {
-        itemInfo.insert();
-        this.itemInfoModels.put(itemInfo.getKey().longValue(), itemInfo);
+        itemInfo.asyncInsert();
+        this.itemInfoModels.put(itemInfo.getValue(TABLE_SIGN_ITEM.KEY), itemInfo);
     }
 
-    public void deleteUnusedModels(TLongHashSet usedKeys)
+    public void deleteUnusedModels(Set<UInteger> usedKeys)
     {
-        for (long key : this.itemInfoModels.keys())
+        Iterator<Entry<UInteger, ItemModel>> it = this.itemInfoModels.entrySet().iterator();
+        while (it.hasNext())
         {
-            if (!usedKeys.contains(key))
+            Entry<UInteger, ItemModel> next = it.next();
+            if (!usedKeys.contains(next.getKey()))
             {
-                this.itemInfoModels.remove(key).delete();
-                this.module.getLog().debug("deleted unused item model #{}", key);
+                it.remove();
+                next.getValue().asyncDelete();
+                this.module.getLog().debug("deleted unused item model #{}", next.getKey().intValue());
             }
         }
     }
 
-    public void delete(SignMarketItemModel itemInfo)
+    public void delete(ItemModel itemInfo)
     {
-        if (itemInfo.getKey() == null || itemInfo.getKey().longValue() == 0) return; // unsaved model
-        this.itemInfoModels.remove(itemInfo.getKey().longValue()).delete();
+        UInteger key = itemInfo.getValue(TABLE_SIGN_ITEM.KEY);
+        if (key == null || key.longValue() == 0)
+        {
+            return; // unsaved model
+        }
+        this.itemInfoModels.remove(key).asyncDelete();
     }
 
-    public void update(SignMarketItemModel itemInfo)
+    public void update(ItemModel itemInfo)
     {
-        itemInfo.update();
+        itemInfo.asyncUpdate();
     }
 }

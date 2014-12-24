@@ -26,7 +26,7 @@ import java.util.Map.Entry;
 
 import org.bukkit.World;
 
-import de.cubeisland.engine.reflect.ReflectedYaml;
+import de.cubeisland.engine.reflect.codec.yaml.ReflectedYaml;
 import de.cubeisland.engine.reflect.annotations.Comment;
 import de.cubeisland.engine.reflect.annotations.Name;
 import de.cubeisland.engine.core.CubeEngine;
@@ -102,8 +102,8 @@ public class SignMarketConfig extends ReflectedYaml
         {
             return true;
         }
-        World w1 = manager.getWorld(world1.longValue());
-        World w2 = manager.getWorld(world2.longValue());
+        World w1 = manager.getWorld(world1);
+        World w2 = manager.getWorld(world2);
         for (Entry<String, List<String>> entry : syncWorlds.entrySet())
         {
             List<String> list = new ArrayList<>(entry.getValue());

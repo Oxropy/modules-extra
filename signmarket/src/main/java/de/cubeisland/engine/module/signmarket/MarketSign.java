@@ -36,21 +36,22 @@ import org.bukkit.inventory.meta.ItemMeta;
 import de.cubeisland.engine.core.CubeEngine;
 import de.cubeisland.engine.core.module.service.Economy;
 import de.cubeisland.engine.core.user.User;
-import de.cubeisland.engine.core.util.ChatFormat;
 import de.cubeisland.engine.core.util.InventoryGuardFactory;
 import de.cubeisland.engine.core.util.RomanNumbers;
+import de.cubeisland.engine.core.util.formatter.MessageType;
 import de.cubeisland.engine.core.util.matcher.Match;
 import de.cubeisland.engine.module.signmarket.exceptions.NoDemandException;
 import de.cubeisland.engine.module.signmarket.exceptions.NoOwnerException;
 import de.cubeisland.engine.module.signmarket.exceptions.NoStockException;
 import de.cubeisland.engine.module.signmarket.exceptions.NoTypeException;
-import de.cubeisland.engine.module.signmarket.storage.SignMarketBlockModel;
-import de.cubeisland.engine.module.signmarket.storage.SignMarketItemModel;
+import de.cubeisland.engine.module.signmarket.storage.BlockModel;
+import de.cubeisland.engine.module.signmarket.storage.ItemModel;
 import gnu.trove.map.hash.TLongLongHashMap;
 import org.jooq.DSLContext;
 import org.jooq.types.UInteger;
 import org.jooq.types.UShort;
 
+import static de.cubeisland.engine.core.util.ChatFormat.*;
 import static de.cubeisland.engine.core.util.InventoryUtil.*;
 import static de.cubeisland.engine.core.util.formatter.MessageType.*;
 import static de.cubeisland.engine.module.signmarket.storage.TableSignBlock.TABLE_SIGN_BLOCK;
@@ -62,17 +63,19 @@ import static org.bukkit.event.inventory.InventoryType.DISPENSER;
 
 public class MarketSign
 {
+    public static final Byte SELL_SIGN = 0;
+    public static final Byte BUY_SIGN = 1;
+    protected final Economy economy;
     private final MarketSignFactory msFactory;
     private final Signmarket module;
-    protected final Economy economy;
-    private SignMarketItemModel itemInfo;
-    private final SignMarketBlockModel blockInfo;
-    private WeakReference<User> userOwner;
-
-    private TLongLongHashMap breakingSign = new TLongLongHashMap();
-
-    private boolean editMode;
+    private final BlockModel blockInfo;
     public boolean syncOnMe = false;
+    private ItemModel itemInfo;
+    private WeakReference<User> userOwner;
+    private TLongLongHashMap breakingSign = new TLongLongHashMap();
+    private boolean editMode;
+    private int inventoryStock;
+    private Inventory displayInventory;
 
     public MarketSign(Signmarket module, Location location)
     {
@@ -88,14 +91,14 @@ public class MarketSign
         this.setItemInfo(dsl.newRecord(TABLE_SIGN_ITEM));
         this.msFactory = module.getMarketSignFactory();
 
-        this.blockInfo.setOwner(owner == null ? null : owner.getEntity().getKey());
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.OWNER, owner == null ? null : owner.getEntity().getKey());
         if (owner != null)
         {
             this.userOwner = new WeakReference<>(owner);
         }
     }
 
-    public MarketSign(Signmarket module, SignMarketItemModel itemModel, SignMarketBlockModel blockModel)
+    public MarketSign(Signmarket module, ItemModel itemModel, BlockModel blockModel)
     {
         this.module = module;
         this.economy = module.getCore().getModuleManager().getServiceManager().getServiceImplementation(Economy.class);
@@ -136,12 +139,16 @@ public class MarketSign
 
     public void dropContents()
     {
-        if (this.isAdminSign() || !this.hasStock() || this.itemInfo.sharesStock() || this.getStock() <= 0) return;
+        if (this.isAdminSign() || !this.hasStock() || this.itemInfo.sharesStock() || this.getStock() <= 0)
+        {
+            return;
+        }
         ItemStack item = this.itemInfo.getItemStack().clone();
-        item.setAmount(this.itemInfo.getStock().intValue());
-        this.itemInfo.setStock(UInteger.valueOf(0)); // just to be sure no items are duped
-        if (item.getAmount() > item.getMaxStackSize() * 5400 // prevent lag from throwing huge amount of items out of the sign
-                                                             // amount of 100 DoubleChest full with given item
+        item.setAmount(this.itemInfo.getValue(TABLE_SIGN_ITEM.STOCK).intValue());
+        this.itemInfo.setValue(TABLE_SIGN_ITEM.STOCK, UInteger.valueOf(0)); // just to be sure no items are duped
+        if (item.getAmount() > item.getMaxStackSize() * 5400
+            // prevent lag from throwing huge amount of items out of the sign
+            // amount of 100 DoubleChest full with given item
             || this.module.getConfig().allowOverStackedOutOfSign)
         {
             this.getLocation().getWorld().dropItemNaturally(this.getLocation(), item);
@@ -155,8 +162,6 @@ public class MarketSign
 
     /**
      * Sets the itemstack to buy/sell
-     *
-     * @param itemStack
      */
     public void setItemStack(ItemStack itemStack, boolean setAmount)
     {
@@ -174,7 +179,7 @@ public class MarketSign
      */
     public boolean hasType()
     {
-        return this.blockInfo.getSigntype() != null;
+        return this.blockInfo.getValue(TABLE_SIGN_BLOCK.SIGNTYPE) != null;
     }
 
     /**
@@ -182,7 +187,7 @@ public class MarketSign
      */
     public void setTypeBuy()
     {
-        this.blockInfo.setSigntype(BUY_SIGN);
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.SIGNTYPE, BUY_SIGN);
         this.setNoDemand();
     }
 
@@ -191,29 +196,7 @@ public class MarketSign
      */
     public void setTypeSell()
     {
-        this.blockInfo.setSigntype(SELL_SIGN);
-    }
-
-    public static final Byte SELL_SIGN = 0;
-    public static final Byte BUY_SIGN = 1;
-
-    /**
-     * Sets the owner of this market-sign to given user.
-     * <p>Sets stock to 0 if null before
-     *
-     * @param user
-     */
-    public void setOwner(User user)
-    {
-        if (user == null)
-        {
-            throw new IllegalArgumentException("Use setAdminSign() instead!");
-        }
-        this.blockInfo.setOwner(user.getEntity().getKey());
-        if (!this.hasStock())
-        {
-            this.setStock(0);
-        }
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.SIGNTYPE, SELL_SIGN);
     }
 
     /**
@@ -223,45 +206,22 @@ public class MarketSign
      */
     public void setAdminSign()
     {
-       this.blockInfo.setOwner(null);
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.OWNER, null);
     }
-
-    /**
-     * Sets the amount to buy/sell with each click
-     *
-     * @param amount
-     */
-    public void setAmount(int amount)
-    {
-        if (amount < 0)
-            throw new IllegalArgumentException("The amount has to be greater than 0!");
-        this.blockInfo.setAmount(UShort.valueOf(amount));
-    }
-
-    /**
-     * Sets the price to buy/sell the specified amount of items with each click
-     *
-     * @param price
-     */
-    public void setPrice(long price)
-    {
-        this.blockInfo.setPrice(UInteger.valueOf(price));
-    }
-
-    private int inventoryStock;
-    private Inventory displayInventory;
 
     public boolean openInventory(User user)
     {
-        if (this.isOwner(user) || (!this.isAdminSign() && module.perms().SIGN_INVENTORY_ACCESS_OTHER.isAuthorized(user)))
+        if (this.isOwner(user) || (!this.isAdminSign() && module.perms().SIGN_INVENTORY_ACCESS_OTHER.isAuthorized(
+            user)))
         {
             if (this.itemInfo.inventory == null || this.getInventory().getViewers().isEmpty())
             {
                 this.itemInfo.inventory = null;
-                this.inventoryStock = getAmountOf(this.getInventory(),this.getItem());
+                this.inventoryStock = getAmountOf(this.getInventory(), this.getItem());
             }
             final Inventory inventory = this.getInventory();
-            Runnable onClose = new Runnable() {
+            Runnable onClose = new Runnable()
+            {
                 @Override
                 public void run()
                 {
@@ -270,14 +230,16 @@ public class MarketSign
                         int newStock = getAmountOf(inventory, MarketSign.this.itemInfo.getItemStack());
                         if (newStock != MarketSign.this.inventoryStock)
                         {
-                            MarketSign.this.setStock(MarketSign.this.getStock() - MarketSign.this.inventoryStock + newStock);
+                            MarketSign.this.setStock(
+                                MarketSign.this.getStock() - MarketSign.this.inventoryStock + newStock);
                             MarketSign.this.inventoryStock = newStock;
                         }
                     }
                     MarketSign.this.saveToDatabase();
                 }
             };
-            Runnable onChange = new Runnable() {
+            Runnable onChange = new Runnable()
+            {
                 @Override
                 public void run()
                 {
@@ -293,9 +255,9 @@ public class MarketSign
                     }
                 }
             };
-            InventoryGuardFactory guard = InventoryGuardFactory.prepareInventory(inventory, user)
-                    .blockPutInAll().blockTakeOutAll()
-                    .onClose(onClose).onChange(onChange);
+            InventoryGuardFactory guard = InventoryGuardFactory.prepareInventory(inventory,
+                                                                                 user).blockPutInAll().blockTakeOutAll().onClose(
+                onClose).onChange(onChange);
             ItemStack itemInSign = this.itemInfo.getItemStack();
             if (this.isTypeBuy())
             {
@@ -312,11 +274,13 @@ public class MarketSign
         {
             if (this.displayInventory == null)
             {
-                this.displayInventory = Bukkit.createInventory(null, DISPENSER, this.isAdminSign() ? "Server" : this.getOwner().getName());
-                this.displayInventory.setItem(4,this.getItem());
+                this.displayInventory = Bukkit.createInventory(null, DISPENSER,
+                                                               this.isAdminSign() ? "Server" : this.getOwner().getName());
+                this.displayInventory.setItem(4, this.getItem());
             }
-            InventoryGuardFactory.prepareInventory(this.displayInventory, user)
-                    .blockPutInAll().blockTakeOutAll().submitInventory(this.module, true);
+            InventoryGuardFactory.prepareInventory(this.displayInventory,
+                                                   user).blockPutInAll().blockTakeOutAll().submitInventory(this.module,
+                                                                                                           true);
             return true;
         }
         return false;
@@ -328,8 +292,6 @@ public class MarketSign
      * <p>on left-click: BUY-sign: if correct item in hand & owner of sign -> refill stock
      * <p>on shift left-click: open sign-inventory OR if correct item in hand & owner put all in stock
      * <p>on shift right-click: inspect the sign, shows all information saved
-     *
-     * @param user
      */
     public void executeAction(User user, Action type)
     {
@@ -352,7 +314,8 @@ public class MarketSign
                 {
                     if (this.isValidSign(null))
                     {
-                        if (!this.isAdminSign() && (this.isOwner(user) || module.perms().SIGN_INVENTORY_ACCESS_OTHER.isAuthorized(user)))
+                        if (!this.isAdminSign() && (this.isOwner(user)
+                            || module.perms().SIGN_INVENTORY_ACCESS_OTHER.isAuthorized(user)))
                         {
                             if (this.isTypeBuy() && this.itemInfo.matchesItem(itemInHand))
                             {
@@ -364,7 +327,9 @@ public class MarketSign
                                 int amount = this.putItems(user, true);
                                 if (amount != 0)
                                 {
-                                    user.sendTranslated(POSITIVE, "Added all ({amount}) {name#material} to the stock!", amount, Match.material().getNameFor(this.itemInfo.getItemStack()));
+                                    user.sendTranslated(POSITIVE, "Added all ({amount}) {name#material} to the stock!",
+                                                        amount, Match.material().getNameFor(
+                                        this.itemInfo.getItemStack()));
                                 }
                                 return;
                             }
@@ -392,7 +357,8 @@ public class MarketSign
                         }
                         if (this.isOwner(user) || module.perms().SIGN_INVENTORY_ACCESS_OTHER.isAuthorized(user))
                         {
-                            if (!this.isInEditMode() && this.hasType() && this.isTypeBuy() && this.hasStock() && this.itemInfo.matchesItem(itemInHand))
+                            if (!this.isInEditMode() && this.hasType() && this.isTypeBuy() && this.hasStock()
+                                && this.itemInfo.matchesItem(itemInHand))
                             {
                                 if (!this.getInventory().getViewers().isEmpty())
                                 {
@@ -401,7 +367,11 @@ public class MarketSign
                                 }
                                 int amount = this.putItems(user, false);
                                 if (amount != 0)
-                                    user.sendTranslated(POSITIVE, "Added {amount}x {input#material} to the stock!", amount, Match.material().getNameFor(this.itemInfo.getItemStack()));
+                                {
+                                    user.sendTranslated(POSITIVE, "Added {amount}x {input#material} to the stock!",
+                                                        amount, Match.material().getNameFor(
+                                            this.itemInfo.getItemStack()));
+                                }
                                 return;
                             }
                             else if (itemInHand.getTypeId() != 0)
@@ -531,40 +501,44 @@ public class MarketSign
         }
         if (!this.hasType())
         {
-            user.sendMessage(ChatFormat.PURPLE + "new Sign");
+            user.sendMessage(PURPLE + "new Sign");
             return;
         }
         if (this.isTypeBuy())
         {
             if (this.isAdminSign())
             {
-                user.sendTranslated(NONE, "{text:Buy:color=DARK_BLUE}: {amount} for {input#price} from {input#owner}", this.getAmount(), this.parsePrice(), "Server");
+                user.sendTranslated(NONE, "{text:Buy:color=DARK_BLUE}: {amount} for {input#price} from {input#owner}",
+                                    this.getAmount(), this.parsePrice(), "Server");
             }
             else
             {
-                user.sendTranslated(NONE, "{text:Buy:color=DARK_BLUE}: {amount} for {input#price} from {user#owner}", this.getAmount(), this.parsePrice(), this.getOwner());
+                user.sendTranslated(NONE, "{text:Buy:color=DARK_BLUE}: {amount} for {input#price} from {user#owner}",
+                                    this.getAmount(), this.parsePrice(), this.getOwner());
             }
         }
         else
         {
             if (this.isAdminSign())
             {
-                user.sendTranslated(NONE, "{text:Sell:color=DARK_BLUE}: {amount} for {input#price} to {input#owner}", this.getAmount(), this.parsePrice(), "Server");
+                user.sendTranslated(NONE, "{text:Sell:color=DARK_BLUE}: {amount} for {input#price} to {input#owner}",
+                                    this.getAmount(), this.parsePrice(), "Server");
             }
             else
             {
-                user.sendTranslated(NONE, "{text:Sell:color=DARK_BLUE}: {amount} for {input#price} to {user#owner}", this.getAmount(), this.parsePrice(), this.getOwner());
+                user.sendTranslated(NONE, "{text:Sell:color=DARK_BLUE}: {amount} for {input#price} to {user#owner}",
+                                    this.getAmount(), this.parsePrice(), this.getOwner());
             }
         }
         if (this.getItem() == null)
         {
             if (this.isInEditMode())
             {
-                user.sendTranslated(NONE, ChatFormat.PURPLE + "No Item");
+                user.sendTranslated(MessageType.of(PURPLE), "No Item");
             }
             else
             {
-                user.sendTranslated(NONE, ChatFormat.DARK_RED + "No Item");
+                user.sendTranslated(MessageType.of(DARK_RED), "No Item");
             }
         }
         else
@@ -572,25 +546,26 @@ public class MarketSign
             ItemMeta meta = this.getItem().getItemMeta();
             if (meta.hasDisplayName())
             {
-                user.sendMessage(ChatFormat.YELLOW + Match.material().getNameFor(this.getItem()) + ChatFormat.WHITE +
-                                     " ("  + ChatFormat.GOLD + this.getItem().getItemMeta().getDisplayName() + ChatFormat.WHITE + ")");
+                user.sendMessage(YELLOW + Match.material().getNameFor(this.getItem()) + WHITE +
+                                     " (" + GOLD + this.getItem().getItemMeta().getDisplayName()
+                                     + WHITE + ")");
             }
             else
             {
                 if (meta.hasLore() || !meta.getEnchants().isEmpty())
                 {
-                    user.sendMessage(ChatFormat.YELLOW + Match.material().getNameFor(this.getItem()));
+                    user.sendMessage(YELLOW + Match.material().getNameFor(this.getItem()));
                 }
                 else
                 {
-                    user.sendMessage(ChatFormat.GOLD + Match.material().getNameFor(this.getItem()));
+                    user.sendMessage(GOLD + Match.material().getNameFor(this.getItem()));
                 }
             }
             if (meta.hasLore())
             {
                 for (String loreLine : this.getItem().getItemMeta().getLore())
                 {
-                    user.sendMessage(ChatFormat.YELLOW + " - " + ChatFormat.WHITE + loreLine);
+                    user.sendMessage(YELLOW + " - " + WHITE + loreLine);
                 }
             }
             if (!meta.getEnchants().isEmpty())
@@ -599,7 +574,8 @@ public class MarketSign
             }
             for (Map.Entry<Enchantment, Integer> entry : meta.getEnchants().entrySet())
             {
-                user.sendMessage(ChatFormat.YELLOW + " - " + ChatFormat.GOLD + Match.enchant().nameFor(entry.getKey()) + " " + ChatFormat.YELLOW + RomanNumbers.intToRoman(entry.getValue()));
+                user.sendMessage(YELLOW + " - " + GOLD + Match.enchant().nameFor(entry.getKey())
+                                     + " " + YELLOW + RomanNumbers.intToRoman(entry.getValue()));
             }
             if (meta instanceof EnchantmentStorageMeta)
             {
@@ -608,7 +584,8 @@ public class MarketSign
                     user.sendTranslated(NEUTRAL, "Book-Enchantments:");
                     for (Map.Entry<Enchantment, Integer> entry : ((EnchantmentStorageMeta)meta).getStoredEnchants().entrySet())
                     {
-                        user.sendMessage(ChatFormat.YELLOW + " - " + ChatFormat.GOLD + Match.enchant().nameFor(entry.getKey()) + " " + ChatFormat.YELLOW + RomanNumbers.intToRoman(entry.getValue()));
+                        user.sendMessage(YELLOW + " - " + GOLD + Match.enchant().nameFor(
+                            entry.getKey()) + " " + YELLOW + RomanNumbers.intToRoman(entry.getValue()));
                     }
                 }
             }
@@ -625,7 +602,8 @@ public class MarketSign
             }
             else
             {
-                user.sendTranslated(NEUTRAL, "In stock: {amount}/{amount#max}", this.getStock(), this.getMaxItemAmount());
+                user.sendTranslated(NEUTRAL, "In stock: {amount}/{amount#max}", this.getStock(),
+                                    this.getMaxItemAmount());
             }
         }
     }
@@ -635,47 +613,43 @@ public class MarketSign
      * <p>in addition to this the market-signs have to share their owner too!
      *
      * @param model the model to compare to
-     * @return
      */
     public boolean canSync(MarketSign model)
     {
-        return this.isValidSign(null)
-            && this.hasStock() == model.hasStock()
-            && this.getItem().isSimilar(model.getItem())
-            && this.itemInfo.getSize() == model.itemInfo.getSize()
-            && this.module.getConfig().canSync(this.module.getCore().getWorldManager(), this.blockInfo.getWorld(), model.blockInfo.getWorld());
+        return this.isValidSign(null) && this.hasStock() == model.hasStock() && this.getItem().isSimilar(
+            model.getItem()) && this.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) == model.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) && this.module.getConfig().canSync(
+            this.module.getCore().getWorldManager(), this.blockInfo.getValue(TABLE_SIGN_BLOCK.WORLD), model.blockInfo.getValue(TABLE_SIGN_BLOCK.WORLD));
     }
 
     /**
      * Returns the size of the display-chest
-     *
-     * @return
      */
     public int getChestSize()
     {
-        if (this.itemInfo.getSize() == -1)
+        if (this.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) == -1)
         {
             return 54;
         }
-        return this.itemInfo.getSize() * 9;
+        return this.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) * 9;
     }
 
     private String parsePrice()
     {
-        if (this.blockInfo.getPrice() == null || this.blockInfo.getPrice().longValue() == 0)
+        UInteger price = this.blockInfo.getValue(TABLE_SIGN_BLOCK.PRICE);
+        if (price == null || price.longValue() == 0)
         {
             if (this.isInEditMode())
             {
-                return ChatFormat.PURPLE + "No Price";
+                return PURPLE + "No Price";
             }
             else
             {
-                return ChatFormat.DARK_RED + "No Price";
+                return DARK_RED + "No Price";
             }
         }
         if (this.allowBuyIfEmpty())
         {
-            return ChatFormat.ITALIC + this.economy.format(this.getPrice());
+            return ITALIC + this.economy.format(this.getPrice());
         }
         return this.economy.format(this.getPrice());
     }
@@ -770,7 +744,8 @@ public class MarketSign
 
     public boolean tryBreak(User user)
     {
-        if (this.breakingSign.containsKey(user.getId()) && System.currentTimeMillis() - this.breakingSign.get(user.getId()) <= 500)//0.5 sec
+        if (this.breakingSign.containsKey(user.getId()) && System.currentTimeMillis() - this.breakingSign.get(
+            user.getId()) <= 500)//0.5 sec
         {
             Location location = this.getLocation();
             if (this.hasStock() && this.getStock() == 1337) //pssst i am not here
@@ -798,8 +773,14 @@ public class MarketSign
 
     public boolean isSatisfied() throws NoStockException, NoDemandException
     {
-        if (!this.hasStock()) throw new NoStockException();
-        if (!this.hasDemand()) throw new NoDemandException();
+        if (!this.hasStock())
+        {
+            throw new NoStockException();
+        }
+        if (!this.hasDemand())
+        {
+            throw new NoDemandException();
+        }
         return this.isFull() || this.getStock() >= this.getDemand();
     }
 
@@ -814,21 +795,21 @@ public class MarketSign
             return -1;
         }
         Integer maxAmount;
-        int maxSizeInStacks = this.itemInfo.getSize() * 9;
+        int maxSizeInStacks = this.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) * 9;
         if (this.module.getConfig().allowOverStackedInSign)
         {
             maxAmount = maxSizeInStacks * 64;
         }
         else
         {
-            maxAmount = maxSizeInStacks*this.getItem().getMaxStackSize();
+            maxAmount = maxSizeInStacks * this.getItem().getMaxStackSize();
         }
         return maxAmount;
     }
 
     public boolean hasInfiniteSize()
     {
-        return this.itemInfo.getSize() == -1;
+        return this.itemInfo.getValue(TABLE_SIGN_ITEM.SIZE) == -1;
     }
 
     @SuppressWarnings("deprecation")
@@ -894,7 +875,8 @@ public class MarketSign
                     }
                     user.getInventory().addItem(item);
                     user.updateInventory();
-                    user.sendTranslated(POSITIVE, "You bought {amount}x {input#item} for {input#price}.", this.getAmount(), Match.material().getNameFor(this.getItem()), price);
+                    user.sendTranslated(POSITIVE, "You bought {amount}x {input#item} for {input#price}.",
+                                        this.getAmount(), Match.material().getNameFor(this.getItem()), price);
                     return;
                 }
                 user.sendTranslated(NEGATIVE, "You don't have enough space in your inventory for these items!");
@@ -902,12 +884,14 @@ public class MarketSign
             } // else Sell
             if (this.hasDemand() && this.isSatisfied())
             {
-                user.sendTranslated(NEGATIVE, "This market sign is {text:satisfied:color=DARK_RED}! You can no longer sell items to it.");
+                user.sendTranslated(NEGATIVE,
+                                    "This market sign is {text:satisfied:color=DARK_RED}! You can no longer sell items to it.");
                 return;
             }
             if (this.isFull())
             {
-                user.sendTranslated(NEGATIVE, "This market sign is {text:full:color=DARK_RED}! You can no longer sell items to it.");
+                user.sendTranslated(NEGATIVE,
+                                    "This market sign is {text:full:color=DARK_RED}! You can no longer sell items to it.");
                 return;
             }
             if (!this.isAdminSign() && !this.canAfford(this.getOwner()))
@@ -936,7 +920,8 @@ public class MarketSign
                 this.saveToDatabase();
             } // else admin sign -> no change
             user.updateInventory();
-            user.sendTranslated(POSITIVE, "You sold {amount}x {input#item} for {input#price}.", this.getAmount(), Match.material().getNameFor(this.getItem()), this.parsePrice());
+            user.sendTranslated(POSITIVE, "You sold {amount}x {input#item} for {input#price}.", this.getAmount(),
+                                Match.material().getNameFor(this.getItem()), this.parsePrice());
         }
     }
 
@@ -947,12 +932,33 @@ public class MarketSign
 
     public User getOwner() throws NoOwnerException
     {
-        if (this.isAdminSign()) throw new NoOwnerException();
+        if (this.isAdminSign())
+        {
+            throw new NoOwnerException();
+        }
         if (userOwner == null || userOwner.get() == null)
         {
-            userOwner = new WeakReference<>(CubeEngine.getUserManager().getUser(this.blockInfo.getOwner()));
+            userOwner = new WeakReference<>(CubeEngine.getUserManager().getUser(this.blockInfo.getValue(
+                TABLE_SIGN_BLOCK.OWNER)));
         }
         return userOwner.get();
+    }
+
+    /**
+     * Sets the owner of this market-sign to given user.
+     * <p>Sets stock to 0 if null before
+     */
+    public void setOwner(User user)
+    {
+        if (user == null)
+        {
+            throw new IllegalArgumentException("Use setAdminSign() instead!");
+        }
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.OWNER, user.getEntity().getKey());
+        if (!this.hasStock())
+        {
+            this.setStock(0);
+        }
     }
 
     public boolean isValidSign(User user)
@@ -966,7 +972,7 @@ public class MarketSign
             }
             result = false;
         }
-        if (this.blockInfo.getAmount() == null || this.blockInfo.getAmount().longValue() <= 0)
+        if (this.blockInfo.getValue(TABLE_SIGN_BLOCK.AMOUNT) == null || this.blockInfo.getValue(TABLE_SIGN_BLOCK.AMOUNT).longValue() <= 0)
         {
             if (user != null)
             {
@@ -974,7 +980,7 @@ public class MarketSign
             }
             result = false;
         }
-        if (this.blockInfo.getPrice() == null || this.blockInfo.getPrice().longValue() <= 0)
+        if (this.blockInfo.getValue(TABLE_SIGN_BLOCK.PRICE) == null || this.blockInfo.getValue(TABLE_SIGN_BLOCK.PRICE).longValue() <= 0)
         {
             if (user != null)
             {
@@ -1022,17 +1028,17 @@ public class MarketSign
             {
                 if (this.isAdminSign())
                 {
-                    lines[0] = ChatFormat.PURPLE.toString() + ChatFormat.BOLD + "Admin-";
+                    lines[0] = PURPLE.toString() + BOLD + "Admin-";
                 }
                 else
                 {
-                    lines[0] = ChatFormat.PURPLE.toString() + ChatFormat.BOLD;
+                    lines[0] = PURPLE.toString() + BOLD;
                 }
             }
-            else if (!isValid ||(this.isTypeBuy() && this.isSoldOut())
-                || (!this.isTypeBuy() && ((this.hasDemand() && this.isSatisfied()) || isFull())))
+            else if (!isValid || (this.isTypeBuy() && this.isSoldOut()) || (!this.isTypeBuy() && (
+                (this.hasDemand() && this.isSatisfied()) || isFull())))
             {
-                lines[0] = ChatFormat.DARK_RED.toString();
+                lines[0] = DARK_RED.toString();
                 if (this.isAdminSign())
                 {
                     lines[0] += "Admin-";
@@ -1040,11 +1046,11 @@ public class MarketSign
             }
             else if (this.isAdminSign())
             {
-                lines[0] = ChatFormat.INDIGO.toString() + ChatFormat.BOLD + "Admin-";
+                lines[0] = INDIGO.toString() + BOLD + "Admin-";
             }
             else
             {
-                lines[0] = ChatFormat.DARK_BLUE.toString() + ChatFormat.BOLD;
+                lines[0] = DARK_BLUE.toString() + BOLD;
             }
             if (this.hasType())
             {
@@ -1054,7 +1060,7 @@ public class MarketSign
                     {
                         if (this.allowBuyIfEmpty())
                         {
-                            lines[0] = "" + ChatFormat.INDIGO + ChatFormat.BOLD + ChatFormat.ITALIC + "Admin-Buy";
+                            lines[0] = "" + INDIGO + BOLD + ITALIC + "Admin-Buy";
                         }
                         else
                         {
@@ -1094,22 +1100,23 @@ public class MarketSign
             {
                 if (this.isInEditMode())
                 {
-                    lines[1] = ChatFormat.PURPLE + "No Item";
+                    lines[1] = PURPLE + "No Item";
                 }
                 else
                 {
-                    lines[1] = ChatFormat.DARK_RED + "No Item";
+                    lines[1] = DARK_RED + "No Item";
                 }
             }
-            else if (item.getItemMeta().hasDisplayName() || item.getItemMeta().hasLore() || !item.getEnchantments().isEmpty())
+            else if (item.getItemMeta().hasDisplayName() || item.getItemMeta().hasLore()
+                || !item.getEnchantments().isEmpty())
             {
                 if (item.getItemMeta().hasDisplayName())
                 {
-                    lines[1] = ChatFormat.YELLOW + item.getItemMeta().getDisplayName();
+                    lines[1] = YELLOW + item.getItemMeta().getDisplayName();
                 }
                 else
                 {
-                    lines[1] = ChatFormat.YELLOW + Match.material().getNameFor(this.getItem());
+                    lines[1] = YELLOW + Match.material().getNameFor(this.getItem());
                 }
             }
             else
@@ -1120,11 +1127,11 @@ public class MarketSign
             {
                 if (this.isInEditMode())
                 {
-                    lines[2] = ChatFormat.PURPLE + "No amount";
+                    lines[2] = PURPLE + "No amount";
                 }
                 else
                 {
-                    lines[2] = ChatFormat.DARK_RED + "No amount";
+                    lines[2] = DARK_RED + "No amount";
                 }
             }
             else
@@ -1132,7 +1139,7 @@ public class MarketSign
                 lines[2] = String.valueOf(this.getAmount());
                 if (!this.hasType())
                 {
-                    lines[2] = ChatFormat.DARK_RED + lines[2];
+                    lines[2] = DARK_RED + lines[2];
                 }
                 else if (this.isTypeBuy())
                 {
@@ -1140,16 +1147,16 @@ public class MarketSign
                     {
                         if (this.allowBuyIfEmpty())
                         {
-                            lines[2] += " " + ChatFormat.DARK_BLUE + ChatFormat.ITALIC + "x" + this.getStock();
+                            lines[2] += " " + DARK_BLUE + ITALIC + "x" + this.getStock();
                         }
                         else
                         {
-                            lines[2] += " " + ChatFormat.DARK_RED + "x" + this.getStock();
+                            lines[2] += " " + DARK_RED + "x" + this.getStock();
                         }
                     }
                     else if (this.hasStock())
                     {
-                        lines[2] += " " + ChatFormat.DARK_BLUE + "x" + this.getStock();
+                        lines[2] += " " + DARK_BLUE + "x" + this.getStock();
                     }
                 }
                 else if (this.hasStock())
@@ -1159,29 +1166,29 @@ public class MarketSign
                     {
                         if (this.hasDemand())
                         {
-                            lines[2] += " " + ChatFormat.AQUA + "x" + (this.getDemand() - this.getStock());
+                            lines[2] += " " + AQUA + "x" + (this.getDemand() - this.getStock());
                         }
                         else
                         {
-                            lines[2] += " " + ChatFormat.AQUA + "x?";
+                            lines[2] += " " + AQUA + "x?";
                         }
                     }
                     else if (this.hasDemand())
                     {
-                        lines[2] += " " + ChatFormat.DARK_RED + "x" + (this.getDemand() - this.getStock());
+                        lines[2] += " " + DARK_RED + "x" + (this.getDemand() - this.getStock());
                     }
                     else
                     {
-                        lines[2] += " " + ChatFormat.DARK_RED + "x?";
+                        lines[2] += " " + DARK_RED + "x?";
                     }
                 }
             }
             lines[3] = this.parsePrice();
 
-            lines[0] = ChatFormat.parseFormats(lines[0]);
-            lines[1] = ChatFormat.parseFormats(lines[1]);
-            lines[2] = ChatFormat.parseFormats(lines[2]);
-            lines[3] = ChatFormat.parseFormats(lines[3]);
+            lines[0] = parseFormats(lines[0]);
+            lines[1] = parseFormats(lines[1]);
+            lines[2] = parseFormats(lines[2]);
+            lines[3] = parseFormats(lines[3]);
             for (int i = 0; i < 4; ++i)
             {
                 blockState.setLine(i, lines[i]);
@@ -1190,7 +1197,7 @@ public class MarketSign
         }
         else
         {
-            this.module.getLog().warn("No sign found where a market sign was expected! {}" , this.getLocation());
+            this.module.getLog().warn("No sign found where a market sign was expected! {}", this.getLocation());
         }
     }
 
@@ -1239,11 +1246,14 @@ public class MarketSign
                 {
                     signString = "MarketSign - Sell";
                 }
-                inventory = Bukkit.getServer().createInventory(this.itemInfo, this.getChestSize(), signString); // DOUBLE-CHEST
+                inventory = Bukkit.getServer().createInventory(this.itemInfo, this.getChestSize(),
+                                                               signString); // DOUBLE-CHEST
                 ItemStack item = this.getItem().clone();
-                item.setAmount(this.itemInfo.getStock().intValue());
-                if (this.itemInfo.getStock().longValue() > 0)
-                    this.addToInventory(inventory,item);
+                item.setAmount(this.itemInfo.getValue(TABLE_SIGN_ITEM.STOCK).intValue());
+                if (this.itemInfo.getValue(TABLE_SIGN_ITEM.STOCK).longValue() > 0)
+                {
+                    this.addToInventory(inventory, item);
+                }
             }
             this.itemInfo.initInventory(inventory);
         }
@@ -1256,7 +1266,20 @@ public class MarketSign
 
     public int getAmount()
     {
-        return this.blockInfo.getAmount() == null ? 0 : this.blockInfo.getAmount().intValue();
+        UShort amount = this.blockInfo.getValue(TABLE_SIGN_BLOCK.AMOUNT);
+        return amount == null ? 0 : amount.intValue();
+    }
+
+    /**
+     * Sets the amount to buy/sell with each click
+     */
+    public void setAmount(int amount)
+    {
+        if (amount < 0)
+        {
+            throw new IllegalArgumentException("The amount has to be greater than 0!");
+        }
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.AMOUNT, UShort.valueOf(amount));
     }
 
     /**
@@ -1264,18 +1287,19 @@ public class MarketSign
      * The item-infos and block-info will be updated accordingly
      *
      * @param itemInfo the new item-info to set
+     *
      * @return the old item-info
      */
-    public SignMarketItemModel setItemInfo(SignMarketItemModel itemInfo)
+    public ItemModel setItemInfo(ItemModel itemInfo)
     {
-        SignMarketItemModel old = this.itemInfo;
+        ItemModel old = this.itemInfo;
         if (old != null)
         {
             old.removeSign(this);
         }
         this.itemInfo = itemInfo;
         itemInfo.addSign(this);
-        this.blockInfo.setItemkey(itemInfo.getKey());
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.ITEMKEY, itemInfo.getValue(TABLE_SIGN_ITEM.KEY));
         return old;
     }
 
@@ -1286,19 +1310,23 @@ public class MarketSign
      */
     public boolean hasStock()
     {
-        return this.itemInfo.getStock() != null;
+        return this.itemInfo.getValue(TABLE_SIGN_ITEM.STOCK) != null;
     }
 
     /**
      * Returns the amount of items in stock in this sign
      *
      * @return the amount of items in stock
+     *
      * @throws NoStockException when this sign has no stock
      */
     public int getStock() throws NoStockException
     {
-        if (!this.hasStock()) throw new NoStockException();
-        return this.itemInfo.getStock().intValue();
+        if (!this.hasStock())
+        {
+            throw new NoStockException();
+        }
+        return this.itemInfo.getValue(TABLE_SIGN_ITEM.STOCK).intValue();
     }
 
     /**
@@ -1308,7 +1336,7 @@ public class MarketSign
      */
     public void setStock(int amount)
     {
-        this.itemInfo.setStock(UInteger.valueOf(amount));
+        this.itemInfo.setValue(TABLE_SIGN_ITEM.STOCK, UInteger.valueOf(amount));
     }
 
     /**
@@ -1316,7 +1344,7 @@ public class MarketSign
      */
     public void setNoStock()
     {
-        this.itemInfo.setStock(null);
+        this.itemInfo.setValue(TABLE_SIGN_ITEM.STOCK, null);
     }
 
     /**
@@ -1327,31 +1355,39 @@ public class MarketSign
      */
     public boolean hasDemand()
     {
-        return this.blockInfo.getDemand() != null;
+        return this.blockInfo.getValue(TABLE_SIGN_BLOCK.DEMAND) != null;
     }
 
     /**
      * Returns the total amount of items that can be sold to this sign
      *
      * @return the total demand
+     *
      * @throws NoDemandException when this sign is a buy-sign or has no demand
      */
     public int getDemand() throws NoDemandException
     {
-        if (this.isTypeBuy() || !this.hasDemand()) throw new NoDemandException();
-        return this.blockInfo.getDemand().intValue();
+        if (this.isTypeBuy() || !this.hasDemand())
+        {
+            throw new NoDemandException();
+        }
+        return this.blockInfo.getValue(TABLE_SIGN_BLOCK.DEMAND).intValue();
     }
 
     /**
      * Sets the demand of this sign to given amount
      *
      * @param amount the new demand
+     *
      * @throws NoDemandException when this sign is a buy-sign and therefore does not allow demand to be set
      */
     public void setDemand(int amount)
     {
-        if (this.isTypeBuy()) throw new NoDemandException();
-        this.blockInfo.setDemand(UInteger.valueOf(amount));
+        if (this.isTypeBuy())
+        {
+            throw new NoDemandException();
+        }
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.DEMAND, UInteger.valueOf(amount));
     }
 
     /**
@@ -1360,7 +1396,7 @@ public class MarketSign
      */
     public void setNoDemand()
     {
-        this.blockInfo.setDemand(null);
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.DEMAND, null);
     }
 
     /**
@@ -1370,27 +1406,41 @@ public class MarketSign
      */
     public double getPrice()
     {
-        if (this.blockInfo.getPrice() == null)
+        UInteger price = this.blockInfo.getValue(TABLE_SIGN_BLOCK.PRICE);
+        if (price == null)
         {
             return 0;
         }
         if (this.allowBuyIfEmpty())
         {
-            return this.economy.convertLongToDouble((long)(this.blockInfo.getPrice().longValue() * this.module.getConfig().factorIfAdminSignIsEmpty));
+            return this.economy.convertLongToDouble(
+                (long)(price.longValue() * this.module.getConfig().factorIfAdminSignIsEmpty));
         }
-        return this.economy.convertLongToDouble(this.blockInfo.getPrice().longValue());
+        return this.economy.convertLongToDouble(price.longValue());
+    }
+
+    /**
+     * Sets the price to buy/sell the specified amount of items with each click
+     */
+    public void setPrice(long price)
+    {
+        this.blockInfo.setValue(TABLE_SIGN_BLOCK.PRICE, UInteger.valueOf(price));
     }
 
     /**
      * Returns whether this sign a is a buy sign
      *
      * @return true if this is a buy sign
+     *
      * @throws NoTypeException if no sign-type is set
      */
     public Boolean isTypeBuy() throws NoTypeException
     {
-        if (!this.hasType()) throw new NoTypeException();
-        return this.blockInfo.getSigntype().equals(BUY_SIGN);
+        if (!this.hasType())
+        {
+            throw new NoTypeException();
+        }
+        return this.blockInfo.getValue(TABLE_SIGN_BLOCK.SIGNTYPE).equals(BUY_SIGN);
     }
 
     /**
@@ -1405,12 +1455,16 @@ public class MarketSign
 
     public void enterEditMode()
     {
-        if (this.isInEditMode()) return;
+        if (this.isInEditMode())
+        {
+            return;
+        }
         if (this.itemInfo.getReferenced().size() > 1) // ItemInfo is synced with other signs
         {
             this.module.getLog().debug("block-model #{} de-synced from item-model #{} (size:{}-1)",
-                     this.blockInfo.getKey(), this.itemInfo.getKey(), this.itemInfo.getReferenced().size());
-            SignMarketItemModel newItemInfo = this.itemInfo.clone();
+                                       this.blockInfo.getValue(TABLE_SIGN_BLOCK.KEY), this.itemInfo.getValue(TABLE_SIGN_ITEM.KEY),
+                                       this.itemInfo.getReferenced().size());
+            ItemModel newItemInfo = this.itemInfo.clone();
             this.setItemInfo(newItemInfo); // de-sync to prevent changing other signs
         }
         this.editMode = true;
@@ -1437,12 +1491,12 @@ public class MarketSign
         return this.blockInfo.getLocation();
     }
 
-    public SignMarketBlockModel getBlockInfo()
+    public BlockModel getBlockInfo()
     {
         return this.blockInfo;
     }
 
-    public SignMarketItemModel getItemInfo()
+    public ItemModel getItemInfo()
     {
         return itemInfo;
     }
@@ -1464,7 +1518,7 @@ public class MarketSign
         {
             throw new IllegalArgumentException("Invalid inventory size!");
         }
-        this.itemInfo.setSize(size.byteValue());
+        this.itemInfo.setValue(TABLE_SIGN_ITEM.SIZE, size.byteValue());
     }
 
     /**
@@ -1474,6 +1528,6 @@ public class MarketSign
      */
     public UInteger getRawOwner()
     {
-        return this.isAdminSign() ? null : this.getBlockInfo().getOwner();
+        return this.isAdminSign() ? null : this.getBlockInfo().getValue(TABLE_SIGN_BLOCK.OWNER);
     }
 }

@@ -20,8 +20,8 @@ package de.cubeisland.engine.module.vote;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 
-import de.cubeisland.engine.core.command.CubeContext;
-import de.cubeisland.engine.core.command.reflected.Command;
+import de.cubeisland.engine.core.command.CommandContext;
+import de.cubeisland.engine.command.methodic.Command;
 import de.cubeisland.engine.core.user.User;
 import de.cubeisland.engine.core.util.TimeUtil;
 import de.cubeisland.engine.module.vote.storage.VoteModel;
@@ -49,12 +49,12 @@ public class VoteCommands
     }
 
     @Command(desc = "shows your current vote situation")
-    public void vote(CubeContext context)
+    public void vote(CommandContext context)
     {
-        if (context.getSender() instanceof User)
+        if (context.getSource() instanceof User)
         {
             VoteModel voteModel = module.dsl.selectFrom(TABLE_VOTE)
-                          .where(TABLE_VOTE.USERID.eq(((User)context.getSender()).getEntity().getKey()))
+                          .where(TABLE_VOTE.USERID.eq(((User)context.getSource()).getEntity().getKey()))
                         .fetchOne();
             if (voteModel == null)
             {
@@ -62,14 +62,14 @@ public class VoteCommands
             }
             else
             {
-                context.sendTranslated(POSITIVE, "You current vote-count is {amount}", voteModel.getVoteamount().intValue());
-                if (System.currentTimeMillis() - voteModel.getLastvote().getTime() >= module.getConfig().voteBonusTime.getMillis())
+                context.sendTranslated(POSITIVE, "You current vote-count is {amount}", voteModel.getValue(TABLE_VOTE.VOTEAMOUNT).intValue());
+                if (System.currentTimeMillis() - voteModel.getValue(TABLE_VOTE.LASTVOTE).getTime() >= module.getConfig().voteBonusTime.getMillis())
                 {
                     context.sendTranslated(NEUTRAL, "Sadly you did not vote in the last {input#time} so your vote-count will be reset to 1", this.formatter.print(module.getConfig().voteBonusTime.toPeriod()));
                 }
-                else if (System.currentTimeMillis() - voteModel.getLastvote().getTime() < TimeUnit.DAYS.toMillis(1))
+                else if (System.currentTimeMillis() - voteModel.getValue(TABLE_VOTE.LASTVOTE).getTime() < TimeUnit.DAYS.toMillis(1))
                 {
-                    context.sendTranslated(POSITIVE, "You voted {input#time} so you will probably not be able to vote again already!", TimeUtil.format(context.getSender().getLocale(), new Date(voteModel.getLastvote().getTime())));
+                    context.sendTranslated(POSITIVE, "You voted {input#time} so you will probably not be able to vote again already!", TimeUtil.format(context.getSource().getLocale(), new Date(voteModel.getValue(TABLE_VOTE.LASTVOTE).getTime())));
                 }
                 else
                 {

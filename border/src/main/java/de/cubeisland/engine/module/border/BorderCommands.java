@@ -23,36 +23,35 @@ import java.util.concurrent.TimeUnit;
 import org.bukkit.Chunk;
 import org.bukkit.World;
 
+import de.cubeisland.engine.command.methodic.Command;
+import de.cubeisland.engine.command.methodic.Flag;
+import de.cubeisland.engine.command.methodic.Flags;
+import de.cubeisland.engine.command.methodic.Param;
+import de.cubeisland.engine.command.methodic.Params;
+import de.cubeisland.engine.core.command.CommandContainer;
+import de.cubeisland.engine.core.command.CommandContext;
 import de.cubeisland.engine.core.command.CommandSender;
-import de.cubeisland.engine.core.command.ContainerCommand;
-import de.cubeisland.engine.core.command.CubeContext;
-import de.cubeisland.engine.core.command.parameterized.completer.WorldCompleter;
-import de.cubeisland.engine.core.command.reflected.Alias;
-import de.cubeisland.engine.core.command.reflected.Command;
-import de.cubeisland.engine.core.command.reflected.context.Flag;
-import de.cubeisland.engine.core.command.reflected.context.Flags;
-import de.cubeisland.engine.core.command.reflected.context.Grouped;
-import de.cubeisland.engine.core.command.reflected.context.IParams;
-import de.cubeisland.engine.core.command.reflected.context.Indexed;
-import de.cubeisland.engine.core.command.reflected.context.NParams;
-import de.cubeisland.engine.core.command.reflected.context.Named;
+import de.cubeisland.engine.core.command.completer.WorldCompleter;
+import de.cubeisland.engine.command.alias.Alias;
 import de.cubeisland.engine.core.user.User;
 import de.cubeisland.engine.core.util.Triplet;
+import org.jooq.types.UInteger;
 
 import static de.cubeisland.engine.core.util.formatter.MessageType.NEGATIVE;
 import static de.cubeisland.engine.core.util.formatter.MessageType.POSITIVE;
 
-public class BorderCommands extends ContainerCommand
+@Command(name = "border", desc = "border commands")
+public class BorderCommands extends CommandContainer
 {
     private final Border module;
 
     public BorderCommands(Border module)
     {
-        super(module, "border", "border commands");
+        super(module);
         this.module = module;
     }
 
-    private LinkedList<Triplet<Long,Integer,Integer>> chunksToGenerate;
+    private LinkedList<Triplet<UInteger,Integer,Integer>> chunksToGenerate;
     private LinkedList<Triplet<World,Integer,Integer>> chunksToUnload;
     private CommandSender sender = null;
     private int total = 0;
@@ -62,24 +61,25 @@ public class BorderCommands extends ContainerCommand
     private boolean running = false;
 
     @Command(desc = "Sets the center of the border")
-    @IParams(@Grouped(req = false, value = {@Indexed(label = "chunkX"), @Indexed(label = "chunkZ")}))
-    @NParams(@Named(names = {"in", "world", "w"}, label = "world", type = World.class, completer = WorldCompleter.class))
+    @Params(positional = {@Param(req = false, label = "chunkX"),
+                          @Param(req = false, label = "chunkZ")},
+            nonpositional = @Param(names = {"in", "world", "w"}, label = "world", type = World.class, completer = WorldCompleter.class))
     @Flags(@Flag(longName = "spawn", name = "s"))
-    public void setCenter(CubeContext context)
+    public void setCenter(CommandContext context)
     {
         World world;
         if (context.hasNamed("in"))
         {
-            world = context.getArg("in");
+            world = context.get("in");
         }
-        else if (!(context.getSender() instanceof User))
+        else if (!(context.getSource() instanceof User))
         {
             context.sendTranslated(NEGATIVE, "You need to specify a world!");
             return;
         }
         else
         {
-            world = ((User)context.getSender()).getWorld();
+            world = ((User)context.getSource()).getWorld();
         }
         Chunk center;
         if (context.hasFlag("s"))
@@ -88,10 +88,10 @@ public class BorderCommands extends ContainerCommand
             context.sendTranslated(POSITIVE, "Center for Border in {world} set to world spawn!", world);
             return;
         }
-        else if (context.hasIndexed(1))
+        else if (context.hasPositional(1))
         {
-            Integer x = context.getArg(0, null);
-            Integer z = context.getArg(0, null);
+            Integer x = context.get(0, null);
+            Integer z = context.get(0, null);
             if (x == null || z == null)
             {
                 context.sendTranslated(NEGATIVE, "Invalid Chunk coordinates!");
@@ -99,9 +99,9 @@ public class BorderCommands extends ContainerCommand
             }
             center = world.getChunkAt(x, z);
         }
-        else if (context.getSender() instanceof User)
+        else if (context.getSource() instanceof User)
         {
-            center = ((User)context.getSender()).getLocation().getChunk();
+            center = ((User)context.getSource()).getLocation().getChunk();
         }
         else
         {
@@ -112,24 +112,24 @@ public class BorderCommands extends ContainerCommand
         context.sendTranslated(POSITIVE, "Center for Border in {world} set!", world);
     }
 
-    @Alias(names = "generateBorder")
+    @Alias(value = "generateBorder")
     @Command(desc = "Generates the chunks located in the border")
-    @IParams(@Grouped(@Indexed(label = "world")))
-    public void generate(CubeContext context)
+    @Params(positional = @Param(label = "world"))
+    public void generate(CommandContext context)
     {
         if (running)
         {
             context.sendTranslated(NEGATIVE, "Chunk generation is already running!");
             return;
         }
-        String worldName = context.getArg(0);
+        String worldName = context.get(0);
         this.chunksToGenerate = new LinkedList<>();
         this.chunksToUnload = new LinkedList<>();
         if (worldName.equals("*"))
         {
             for (World world : this.module.getCore().getWorldManager().getWorlds())
             {
-                this.addChunksToGenerate(world, context.getSender());
+                this.addChunksToGenerate(world, context.getSource());
             }
         }
         else
@@ -140,9 +140,9 @@ public class BorderCommands extends ContainerCommand
                 context.sendTranslated(NEGATIVE, "World {input} not found!", worldName);
                 return;
             }
-            this.addChunksToGenerate(world, context.getSender());
+            this.addChunksToGenerate(world, context.getSource());
         }
-        this.sender = context.getSender();
+        this.sender = context.getSource();
         this.total = this.chunksToGenerate.size();
         this.totalDone = 0;
         this.lastNotify = System.currentTimeMillis();
@@ -160,7 +160,7 @@ public class BorderCommands extends ContainerCommand
         radius += sender.getServer().getViewDistance();
         int radiusSquared = radius * radius;
         int chunksAdded = 0;
-        long worldID = this.module.getCore().getWorldManager().getWorldId(world);
+        UInteger worldID = this.module.getCore().getWorldManager().getWorldId(world);
         // Construct Spiral
         int curLen = 1;
         int curX = spawnX;
@@ -190,7 +190,7 @@ public class BorderCommands extends ContainerCommand
         sender.sendTranslated(POSITIVE, "Added {amount} chunks to generate in {world}", chunksAdded, world);
     }
 
-    private boolean addIfInBorder(BorderConfig config, long worldId, int x, int z, int spawnX, int spawnZ, int radius, int radiusSquared)
+    private boolean addIfInBorder(BorderConfig config, UInteger worldId, int x, int z, int spawnX, int spawnZ, int radius, int radiusSquared)
     {
         if (config.square)
         {
@@ -240,7 +240,7 @@ public class BorderCommands extends ContainerCommand
             {
                 break;
             }
-            Triplet<Long, Integer, Integer> poll = chunksToGenerate.poll();
+            Triplet<UInteger, Integer, Integer> poll = chunksToGenerate.poll();
             World world = this.module.getCore().getWorldManager().getWorld(poll.getFirst());
             if (!world.isChunkLoaded(poll.getSecond(), poll.getThird()))
             {

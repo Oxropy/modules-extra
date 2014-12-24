@@ -26,12 +26,11 @@ import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 
 import de.cubeisland.engine.core.Core;
-import de.cubeisland.engine.core.CubeEngine;
 import de.cubeisland.engine.core.i18n.I18n;
 import de.cubeisland.engine.core.user.User;
 import de.cubeisland.engine.core.util.McUUID;
 import de.cubeisland.engine.module.vaultlink.Vaultlink;
-import net.milkbowl.vault.economy.Economy;
+import net.milkbowl.vault.economy.AbstractEconomy;
 import net.milkbowl.vault.economy.EconomyResponse;
 import net.milkbowl.vault.economy.EconomyResponse.ResponseType;
 
@@ -39,9 +38,8 @@ import static de.cubeisland.engine.core.util.formatter.MessageType.NONE;
 import static net.milkbowl.vault.economy.EconomyResponse.ResponseType.FAILURE;
 import static net.milkbowl.vault.economy.EconomyResponse.ResponseType.SUCCESS;
 
-public class CubeEconomyService implements Economy
+public class CubeEconomyService extends AbstractEconomy
 {
-    private final Vaultlink module;
     private final AtomicReference<de.cubeisland.engine.core.module.service.Economy> backingService;
     private final Core core;
     private final I18n i18n;
@@ -49,7 +47,6 @@ public class CubeEconomyService implements Economy
     public CubeEconomyService(Vaultlink module,
                               AtomicReference<de.cubeisland.engine.core.module.service.Economy> backingService)
     {
-        this.module = module;
         this.backingService = backingService;
         this.core = module.getCore();
         this.i18n = core.getI18n();
@@ -58,13 +55,17 @@ public class CubeEconomyService implements Economy
     @Override
     public boolean isEnabled()
     {
-        return module.isEnabled();
+        return backingService.get() != null && backingService.get().isEnabled();
     }
 
     @Override
     public String getName()
     {
-        return CubeEngine.class.getSimpleName() + ":" + module.getName();
+        if (backingService.get() == null)
+        {
+            return "CubeEngine:Vaultlink";
+        }
+        return backingService.get().getName();
     }
 
     @Override
@@ -191,7 +192,7 @@ public class CubeEconomyService implements Economy
     @Override
     public EconomyResponse createBank(String name, String owner)
     {
-        if (backingService.get().createBank(name, owner))
+        if (backingService.get().createBank(name, core.getUserManager().getExactUser(owner).getUniqueId())) // TODO this is ugly :(
         {
             return new EconomyResponse(0, bankBalance(name).balance, SUCCESS, "");
         }
@@ -311,4 +312,6 @@ public class CubeEconomyService implements Economy
     {
         return createPlayerAccount(name);
     }
+
+
 }

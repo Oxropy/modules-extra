@@ -26,7 +26,6 @@ import org.bukkit.block.Block;
 
 import de.cubeisland.engine.core.module.Module;
 import org.jooq.DSLContext;
-import org.jooq.types.UInteger;
 
 import static de.cubeisland.engine.module.itemrepair.repair.storage.TableRepairBlock.TABLE_REPAIR_BLOCK;
 
@@ -47,7 +46,7 @@ public class RepairBlockPersister
         RepairBlockModel repairBlockModel = this.models.remove(block);
         if (repairBlockModel != null)
         {
-            repairBlockModel.delete();
+            repairBlockModel.asyncDelete();
         }
         else
         {
@@ -57,8 +56,7 @@ public class RepairBlockPersister
 
     public Collection<RepairBlockModel> getAll(World world)
     {
-        Collection <RepairBlockModel> all = this.dsl.selectFrom(TABLE_REPAIR_BLOCK)
-            .where(TABLE_REPAIR_BLOCK.WORLD.eq(UInteger.valueOf(this.module.getCore().getWorldManager().getWorldId(world)))).fetch();
+        Collection <RepairBlockModel> all = this.dsl.selectFrom(TABLE_REPAIR_BLOCK).where(TABLE_REPAIR_BLOCK.WORLD.eq(this.module.getCore().getWorldManager().getWorldId(world))).fetch();
         for (RepairBlockModel repairBlockModel : all)
         {
             this.models.put(repairBlockModel.getBlock(this.module.getCore().getWorldManager()),repairBlockModel);
@@ -68,7 +66,7 @@ public class RepairBlockPersister
 
     public void storeBlock(Block block, RepairBlockModel repairBlockModel)
     {
-        repairBlockModel.insert();
+        repairBlockModel.asyncInsert();
         this.models.put(block,repairBlockModel);
     }
 }

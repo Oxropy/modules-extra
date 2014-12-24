@@ -48,6 +48,10 @@
     <module>kits</module>
     <module>spawner</module>
     <module>bigdata</module>
+    <module>donations</module>
+    <module>chopchop</module>
+    <module>holiday</module>
+    <module>unbreakableboat</module>
     <module>uhc</module>
   </modules>
 

@@ -17,50 +17,49 @@
  */
 package de.cubeisland.engine.module.vaultlink.service;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
-import de.cubeisland.engine.core.CubeEngine;
-import de.cubeisland.engine.core.permission.PermissionManager;
 import de.cubeisland.engine.core.user.User;
+import de.cubeisland.engine.core.user.UserManager;
 import de.cubeisland.engine.core.world.WorldManager;
-import de.cubeisland.engine.module.roles.Roles;
-import de.cubeisland.engine.module.roles.role.DataStore.PermissionValue;
-import de.cubeisland.engine.module.roles.role.Role;
-import de.cubeisland.engine.module.roles.role.RoleProvider;
-import de.cubeisland.engine.module.roles.role.RolesAttachment;
-import de.cubeisland.engine.module.roles.role.resolved.ResolvedPermission;
 import de.cubeisland.engine.module.vaultlink.Vaultlink;
 import net.milkbowl.vault.permission.Permission;
 
 public class CubePermissionService extends Permission
 {
     private final Vaultlink module;
-    private final Roles roles;
+    private AtomicReference<de.cubeisland.engine.core.module.service.Permission> backingService;
     private final WorldManager wm;
-    private final PermissionManager pm;
+    private final UserManager um;
 
-    public CubePermissionService(Vaultlink module, Roles roles)
+    public CubePermissionService(Vaultlink module, AtomicReference<de.cubeisland.engine.core.module.service.Permission> roles)
     {
         this.module = module;
-        this.roles = roles;
-        this.wm = roles.getCore().getWorldManager();
-        this.pm = roles.getCore().getPermissionManager();
+        this.backingService = roles;
+        this.wm = module.getCore().getWorldManager();
+        this.um = module.getCore().getUserManager();
     }
 
     @Override
     public String getName()
     {
-        return CubeEngine.class.getSimpleName() + ":" + module.getName();
+        if (backingService.get() == null)
+        {
+            return "CubeEngine:Vaultlink";
+        }
+        return backingService.get().getName();
     }
 
     @Override
     public boolean isEnabled()
     {
-        return roles.isEnabled();
+        return backingService.get() != null && backingService.get().isEnabled();
     }
 
     @Override
@@ -72,7 +71,7 @@ public class CubePermissionService extends Permission
     @Override
     public boolean playerHas(String worldName, String player, String permission)
     {
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -84,37 +83,15 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = this.wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return false;
-        }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        ResolvedPermission resolved = attachment.getDataHolder(world).getPermissions().get(permission);
-        if (resolved == null)
-        {
-            switch (pm.getDefaultFor(permission))
-            {
-                case TRUE:
-                    return true;
-                case FALSE:
-                    return false;
-                case OP:
-                    return user.isOp();
-                case NOT_OP:
-                    return !user.isOp();
-                default:
-                    return user.isOp();
-            }
-        }
-        return resolved.isSet();
+        return world != null && backingService.get().has(world, user, permission);
     }
 
     @Override
     public boolean playerAdd(String worldName, String player, String permission)
     {
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -126,36 +103,30 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
         if (world == null)
         {
             return false;
         }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getDataHolder(world).setPermission(permission, PermissionValue.TRUE);
-        attachment.getCurrentDataHolder().apply();
-        return true;
+        return this.backingService.get().add(world, user, permission);
     }
 
     @Override
     public boolean playerAddTransient(Player player, String permission)
     {
-        User user = roles.getCore().getUserManager().getExactUser(player.getUniqueId());
+        User user = um.getExactUser(player.getUniqueId());
         if (user == null)
         {
             return false;
         }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getCurrentDataHolder().setTempPermission(permission, PermissionValue.TRUE);
-        attachment.getCurrentDataHolder().apply();
-        return true;
+        return this.backingService.get().addTemporary(player.getWorld(), player, permission);
     }
 
     @Override
     public boolean playerRemove(String worldName, String player, String permission)
     {
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -167,30 +138,24 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
         if (world == null)
         {
             return false;
         }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getDataHolder(world).setPermission(permission, PermissionValue.RESET);
-        attachment.getDataHolder(world).apply();
-        return true;
+        return this.backingService.get().remove(world, user, permission);
     }
 
     @Override
     public boolean playerRemoveTransient(Player player, String permission)
     {
-        User user = roles.getCore().getUserManager().getExactUser(player.getUniqueId());
+        User user = um.getExactUser(player.getUniqueId());
         if (user == null)
         {
             return false;
         }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getCurrentDataHolder().setPermission(permission, PermissionValue.RESET);
-        attachment.getCurrentDataHolder().apply();
-        return true;
+        return this.backingService.get().removeTemporary(player.getWorld(), player, permission);
     }
 
     @Override
@@ -201,27 +166,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        RoleProvider provider;
-        if (worldName != null)
-        {
-            World world = this.module.getCore().getWorldManager().getWorld(worldName);
-            if (world == null)
-            {
-                return false;
-            }
-            provider = roles.getRolesManager().getProvider(world);
-        }
-        else
-        {
-            provider = roles.getRolesManager().getGlobalProvider();
-        }
-        Role role = provider.getRole(group);
-        if (role == null)
-        {
-            return false;
-        }
-        ResolvedPermission resolved = role.getPermissions().get(permission);
-        return resolved != null && resolved.isSet();
+        return this.backingService.get().has(wm.getWorld(worldName), group, permission);
     }
 
     @Override
@@ -232,28 +177,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        RoleProvider provider;
-        if (worldName != null)
-        {
-            World world = this.module.getCore().getWorldManager().getWorld(worldName);
-            if (world == null)
-            {
-                return false;
-            }
-            provider = roles.getRolesManager().getProvider(world);
-        }
-        else
-        {
-            provider = roles.getRolesManager().getGlobalProvider();
-        }
-        Role role = provider.getRole(group);
-        if (role == null)
-        {
-            return false;
-        }
-        role.setPermission(permission, PermissionValue.TRUE);
-        role.save();
-        return true;
+        return this.backingService.get().add(wm.getWorld(worldName), group, permission);
     }
 
     @Override
@@ -264,28 +188,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        RoleProvider provider;
-        if (worldName != null)
-        {
-            World world = this.module.getCore().getWorldManager().getWorld(worldName);
-            if (world == null)
-            {
-                return false;
-            }
-            provider = roles.getRolesManager().getProvider(world);
-        }
-        else
-        {
-            provider = roles.getRolesManager().getGlobalProvider();
-        }
-        Role role = provider.getRole(group);
-        if (role == null)
-        {
-            return false;
-        }
-        role.setPermission(permission, null);
-        role.save();
-        return true;
+        return this.backingService.get().remove(wm.getWorld(worldName), group, permission);
     }
 
     @Override
@@ -296,7 +199,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -308,14 +211,9 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return false;
-        }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        return attachment.getDataHolder(world).getRawRoles().contains(group);
+        return world != null && this.backingService.get().hasRole(world, user, group);
     }
 
     @Override
@@ -326,7 +224,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -338,21 +236,9 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return false;
-        }
-        Role role = roles.getRolesManager().getProvider(world).getRole(group);
-        if (role == null)
-        {
-            return false;
-        }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getDataHolder(world).assignRole(role);
-        attachment.getCurrentDataHolder().apply();
-        return true;
+        return world != null && this.backingService.get().addRole(world, user, group);
     }
 
     @Override
@@ -363,7 +249,7 @@ public class CubePermissionService extends Permission
             this.module.getLog().warn(new IllegalArgumentException(), "The group name should never be null!");
             return false;
         }
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return false;
@@ -375,27 +261,15 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return false;
-        }
-        Role role = roles.getRolesManager().getProvider(world).getRole(group);
-        if (role == null)
-        {
-            return false;
-        }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        attachment.getDataHolder(world).removeRole(role);
-        attachment.getCurrentDataHolder().apply();
-        return true;
+        return world != null && this.backingService.get().removeRole(world, user, group);
     }
 
     @Override
     public String[] getPlayerGroups(String worldName, String player)
     {
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return null;
@@ -407,25 +281,15 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return null;
-        }
-        Set<String> roles = new HashSet<>();
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        for (Role role : attachment.getDataHolder(world).getRoles())
-        {
-            roles.add(role.getName());
-        }
-        return roles.toArray(new String[roles.size()]);
+        return world == null ? null : this.backingService.get().getRoles(world, user);
     }
 
     @Override
     public String getPrimaryGroup(String worldName, String player)
     {
-        User user = roles.getCore().getUserManager().findExactUser(player);
+        User user = um.findExactUser(player);
         if (user == null)
         {
             return null;
@@ -437,27 +301,19 @@ public class CubePermissionService extends Permission
         }
         else
         {
-            world = this.module.getCore().getWorldManager().getWorld(worldName);
+            world = wm.getWorld(worldName);
         }
-        if (world == null)
-        {
-            return null;
-        }
-        RolesAttachment attachment = user.get(RolesAttachment.class);
-        return attachment.getDominantRole(world).getName();
+        return world == null ? null : this.backingService.get().getDominantRole(world, user);
     }
 
     @Override
     public String[] getGroups()
     {
         Set<String> roles = new HashSet<>();
+        roles.addAll(Arrays.asList(this.backingService.get().getRoles(null)));
         for (World world : wm.getWorlds())
         {
-            RoleProvider provider = this.roles.getRolesManager().getProvider(world);
-            for (Role role : provider.getRoles())
-            {
-                roles.add(role.getName());
-            }
+            roles.addAll(Arrays.asList(this.backingService.get().getRoles(world)));
         }
         return roles.toArray(new String[roles.size()]);
     }
@@ -465,6 +321,6 @@ public class CubePermissionService extends Permission
     @Override
     public boolean hasGroupSupport()
     {
-        return true;
+        return this.backingService.get().hasRoleSupport();
     }
 }

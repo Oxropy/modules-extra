@@ -81,7 +81,7 @@ public class RepairBlockManager implements Listener
         for (RepairBlockModel model : models)
         {
             Block block = model.getBlock(this.module.getCore().getWorldManager());
-            if (block.getType().name().equals(model.getType()))
+            if (block.getType().name().equals(model.getValue(TABLE_REPAIR_BLOCK.TYPE)))
             {
                 if (this.repairBlocks.containsKey(block.getType()))
                 {
@@ -91,14 +91,14 @@ public class RepairBlockManager implements Listener
                 {
                     this.module.getLog().info("Deleting saved RepairBlock that is no longer a RepairBlock at {}:{}:{} in {}",
                                               block.getX(), block.getY(), block.getZ(), block.getWorld().getName());
-                    model.delete();
+                    model.asyncDelete();
                 }
             }
             else
             {
                 this.module.getLog().info("Deleting saved RepairBlock that does not correspond to block at {}:{}:{} in {}",
                                           block.getX(), block.getY(), block.getZ(), block.getWorld().getName());
-                model.delete();
+                model.asyncDelete();
             }
         }
     }
